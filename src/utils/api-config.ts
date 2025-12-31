@@ -1,0 +1,445 @@
+/**
+ * API Configuration
+ * Centralized configuration for backend API endpoints
+ */
+
+import type { Recording } from "../types/recording";
+
+// Backend API base URL
+// In production, this should come from environment variables
+const API_BASE_URL = "https://localhost:3018";
+
+/**
+ * Video upload API endpoints
+ *
+ * Flow:
+ * 1. POST /upload/init - Backend generates signed PUT URL from GCP (NOT resumable)
+ * 2. Frontend uploads directly to GCP using signed URL (single PUT)
+ * 3. POST /upload/complete - Backend marks upload as complete
+ */
+export const API_ENDPOINTS = {
+  /**
+   * Initialize video upload - creates signed PUT URL (NOT resumable)
+   * Backend → GCP: generate signed PUT URL
+   * Backend → Frontend: return that upload link
+   * POST /upload/init
+   */
+  INIT_UPLOAD: `${API_BASE_URL}/upload/init`,
+
+  /**
+   * Initialize resumable upload - creates resumable session (V2)
+   * Backend → GCP: create resumable upload session
+   * Backend → Frontend: return recordingId and chunkSize
+   * POST /upload/init-resumable
+   */
+  INIT_RESUMABLE_UPLOAD: `${API_BASE_URL}/upload/init-resumable`,
+
+  /**
+   * Upload chunk - uploads a single chunk to backend (V2)
+   * Frontend → Backend: upload chunk with Content-Range
+   * Backend → GCP: upload chunk to resumable session
+   * PUT /upload/:recordingId/chunk
+   */
+  UPLOAD_CHUNK: (recordingId: string) =>
+    `${API_BASE_URL}/upload/${recordingId}/chunk`,
+
+  /**
+   * Get upload status - get current upload progress (V2)
+   * Frontend → Backend: get upload status
+   * GET /upload/:recordingId/status
+   */
+  GET_UPLOAD_STATUS: (recordingId: string) =>
+    `${API_BASE_URL}/upload/${recordingId}/status`,
+
+  /**
+   * Complete video upload - marks upload as completed
+   * Frontend → Backend: mark upload complete
+   * POST /upload/complete
+   */
+  COMPLETE_UPLOAD: `${API_BASE_URL}/upload/complete`,
+
+  /**
+   * Get all recordings - fetch list of user's recordings
+   * Frontend → Backend: get recordings list
+   * GET /recordings
+   */
+  GET_RECORDINGS: `${API_BASE_URL}/recordings`,
+
+  /**
+   * Get single recording - fetch recording details
+   * Frontend → Backend: get recording by ID
+   * GET /recordings/:recordingId
+   */
+  GET_RECORDING: (recordingId: string) =>
+    `${API_BASE_URL}/recordings/${recordingId}`,
+} as const;
+
+/**
+ * Initialize video upload session
+ *
+ * Flow: Frontend → Backend: "I want to upload a video"
+ * Backend → GCP: generate signed PUT URL (NOT resumable - browser-safe)
+ * Backend → Frontend: return that upload link
+ *
+ * Returns signed PUT URL from GCS that frontend will use for direct upload
+ * IMPORTANT: This is a simple PUT URL, NOT a resumable upload URL
+ */
+export async function initVideoUpload(params: {
+  fileName: string;
+  fileSize: number;
+  mimeType: string;
+  duration?: number;
+  userId?: string;
+}): Promise<{
+  recordingId: string;
+  uploadUrl: string;
+  gcsFilePath: string;
+  expiresIn: number;
+}> {
+  console.log("📤 Initializing upload:", params);
+  console.log("🌐 API Endpoint:", API_ENDPOINTS.INIT_UPLOAD);
+
+  try {
+    const response = await fetch(API_ENDPOINTS.INIT_UPLOAD, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        // TODO: Add Authorization header when auth is implemented
+        // Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        fileName: params.fileName,
+        fileSize: params.fileSize,
+        mimeType: params.mimeType,
+        duration: params.duration,
+        ...(params.userId && { userId: params.userId }),
+      }),
+    });
+
+    // Handle network errors (empty response, connection refused, etc.)
+    if (!response.ok) {
+      let errorMessage = `Failed to initialize upload: ${response.status} ${response.statusText}`;
+      try {
+        const errorData = await response.json();
+        errorMessage = errorData.error || errorData.message || errorMessage;
+      } catch {
+        // If response is not JSON, try to get text
+        try {
+          const errorText = await response.text();
+          if (errorText) {
+            errorMessage = errorText;
+          }
+        } catch {
+          // Ignore if we can't read response
+        }
+      }
+      throw new Error(errorMessage);
+    }
+
+    const result = await response.json();
+    console.log("✅ Upload initialized successfully:", result);
+    return result;
+  } catch (error) {
+    console.error("❌ Upload initialization error:", error);
+    throw error;
+  }
+}
+
+/**
+ * Initialize resumable upload session (V2)
+ *
+ * Flow: Frontend → Backend: "I want to upload a large video"
+ * Backend → GCP: create resumable upload session
+ * Backend → Frontend: return recordingId and chunkSize
+ *
+ * Returns recordingId and chunkSize for chunked uploads
+ */
+export async function initResumableUpload(params: {
+  fileName: string;
+  fileSize: number;
+  mimeType: string;
+  duration?: number;
+  userId?: string;
+}): Promise<{
+  recordingId: string;
+  chunkSize: number;
+}> {
+  console.log("📤 Initializing resumable upload:", params);
+  console.log("🌐 API Endpoint:", API_ENDPOINTS.INIT_RESUMABLE_UPLOAD);
+
+  try {
+    const response = await fetch(API_ENDPOINTS.INIT_RESUMABLE_UPLOAD, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        // TODO: Add Authorization header when auth is implemented
+        // Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        fileName: params.fileName,
+        fileSize: params.fileSize,
+        mimeType: params.mimeType,
+        duration: params.duration,
+        ...(params.userId && { userId: params.userId }),
+      }),
+    });
+
+    if (!response.ok) {
+      let errorMessage = `Failed to initialize resumable upload: ${response.status} ${response.statusText}`;
+      try {
+        const errorData = await response.json();
+        errorMessage = errorData.error || errorData.message || errorMessage;
+      } catch {
+        try {
+          const errorText = await response.text();
+          if (errorText) {
+            errorMessage = errorText;
+          }
+        } catch {
+          // Ignore if we can't read response
+        }
+      }
+      throw new Error(errorMessage);
+    }
+
+    const result = await response.json();
+    console.log("✅ Resumable upload initialized successfully:", result);
+    return result;
+  } catch (error) {
+    console.error("❌ Resumable upload initialization error:", error);
+    throw error;
+  }
+}
+
+/**
+ * Get upload status (V2)
+ *
+ * Flow: Frontend → Backend: "What's the upload status?"
+ * Backend → Frontend: return uploadedBytes, chunkSize, fileSize
+ */
+export async function getUploadStatus(recordingId: string): Promise<{
+  uploadedBytes: number;
+  chunkSize: number;
+  fileSize: number;
+}> {
+  console.log("📊 Getting upload status:", recordingId);
+  console.log("🌐 API Endpoint:", API_ENDPOINTS.GET_UPLOAD_STATUS(recordingId));
+
+  try {
+    const response = await fetch(API_ENDPOINTS.GET_UPLOAD_STATUS(recordingId), {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        // TODO: Add Authorization header when auth is implemented
+        // Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) {
+      let errorMessage = `Failed to get upload status: ${response.status} ${response.statusText}`;
+      try {
+        const errorData = await response.json();
+        errorMessage = errorData.error || errorData.message || errorMessage;
+      } catch {
+        try {
+          const errorText = await response.text();
+          if (errorText) {
+            errorMessage = errorText;
+          }
+        } catch {
+          // Ignore if we can't read response
+        }
+      }
+      throw new Error(errorMessage);
+    }
+
+    const result = await response.json();
+    console.log("✅ Upload status retrieved successfully:", result);
+    return result;
+  } catch (error) {
+    console.error("❌ Get upload status error:", error);
+    throw error;
+  }
+}
+
+/**
+ * Complete video upload
+ * Marks the upload as completed and returns playback URL
+ */
+export async function completeVideoUpload(params: {
+  recordingId: string;
+  size: number;
+}): Promise<{
+  success: boolean;
+  recordingId: string;
+  status: string;
+  fileSize: number;
+  playbackUrl?: string;
+}> {
+  console.log("🎯 Completing upload:", params);
+  console.log("🌐 API Endpoint:", API_ENDPOINTS.COMPLETE_UPLOAD);
+
+  try {
+    const response = await fetch(API_ENDPOINTS.COMPLETE_UPLOAD, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        // TODO: Add Authorization header when auth is implemented
+        // Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        recordingId: params.recordingId,
+        size: params.size,
+      }),
+    });
+
+    // Handle network errors
+    if (!response.ok) {
+      let errorMessage = `Failed to complete upload: ${response.status} ${response.statusText}`;
+      try {
+        const errorData = await response.json();
+        errorMessage = errorData.error || errorData.message || errorMessage;
+      } catch {
+        // If response is not JSON, try to get text
+        try {
+          const errorText = await response.text();
+          if (errorText) {
+            errorMessage = errorText;
+          }
+        } catch {
+          // Ignore if we can't read response
+        }
+      }
+      throw new Error(errorMessage);
+    }
+
+    const result = await response.json();
+    console.log("✅ Upload completed successfully:", result);
+    return result;
+  } catch (error) {
+    // Handle network errors
+    if (error instanceof TypeError && error.message.includes("fetch")) {
+      const networkError = new Error(
+        `Cannot connect to backend API at ${API_BASE_URL}. ` +
+          `Please ensure the backend server is running.\n` +
+          `Original error: ${error.message}`
+      );
+      console.error("❌ Network error:", networkError.message);
+      throw networkError;
+    }
+    // Re-throw other errors
+    console.error("❌ Upload completion error:", error);
+    throw error;
+  }
+}
+
+/**
+ * Get all recordings
+ * Fetches list of user's recordings
+ */
+export async function getRecordings(): Promise<Recording[]> {
+  console.log("📋 Fetching recordings...");
+  console.log("🌐 API Endpoint:", API_ENDPOINTS.GET_RECORDINGS);
+
+  try {
+    const response = await fetch(API_ENDPOINTS.GET_RECORDINGS, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        // TODO: Add Authorization header when auth is implemented
+        // Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) {
+      let errorMessage = `Failed to fetch recordings: ${response.status} ${response.statusText}`;
+      try {
+        const errorData = await response.json();
+        errorMessage = errorData.error || errorData.message || errorMessage;
+      } catch {
+        try {
+          const errorText = await response.text();
+          if (errorText) {
+            errorMessage = errorText;
+          }
+        } catch {
+          // Ignore if we can't read response
+        }
+      }
+      throw new Error(errorMessage);
+    }
+
+    const result = await response.json();
+    console.log("✅ Recordings fetched successfully:", result);
+    console.log("📊 Response type:", typeof result);
+    console.log("📊 Is array:", Array.isArray(result));
+
+    // Handle different response formats
+    let recordings: Recording[] = [];
+    if (Array.isArray(result)) {
+      recordings = result;
+    } else if (result && Array.isArray(result.data)) {
+      // Backend might wrap in { data: [...] }
+      recordings = result.data;
+    } else if (result && Array.isArray(result.recordings)) {
+      // Backend might wrap in { recordings: [...] }
+      recordings = result.recordings;
+    } else if (result && typeof result === "object") {
+      // Single recording object? Wrap in array
+      recordings = [result];
+    }
+
+    console.log("📊 Processed recordings:", recordings);
+    console.log("📊 Processed recordings count:", recordings.length);
+
+    return recordings;
+  } catch (error) {
+    console.error("❌ Fetch recordings error:", error);
+    throw error;
+  }
+}
+
+/**
+ * Get single recording by ID
+ * Fetches detailed information about a specific recording
+ */
+export async function getRecording(recordingId: string): Promise<Recording> {
+  console.log("📋 Fetching recording:", recordingId);
+  console.log("🌐 API Endpoint:", API_ENDPOINTS.GET_RECORDING(recordingId));
+
+  try {
+    const response = await fetch(API_ENDPOINTS.GET_RECORDING(recordingId), {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        // TODO: Add Authorization header when auth is implemented
+        // Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) {
+      let errorMessage = `Failed to fetch recording: ${response.status} ${response.statusText}`;
+      try {
+        const errorData = await response.json();
+        errorMessage = errorData.error || errorData.message || errorMessage;
+      } catch {
+        try {
+          const errorText = await response.text();
+          if (errorText) {
+            errorMessage = errorText;
+          }
+        } catch {
+          // Ignore if we can't read response
+        }
+      }
+      throw new Error(errorMessage);
+    }
+
+    const result = await response.json();
+    console.log("✅ Recording fetched successfully:", result);
+    return result;
+  } catch (error) {
+    console.error("❌ Fetch recording error:", error);
+    throw error;
+  }
+}
