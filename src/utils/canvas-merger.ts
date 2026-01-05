@@ -1,14 +1,29 @@
-/**
- * Canvas-based Stream Merger
- * Combines screen and webcam streams using Canvas API
- */
-
 export type WebcamPosition = {
-  x: number; // Percentage from left (0-100)
-  y: number; // Percentage from top (0-100)
-  width: number; // Percentage of canvas width (0-100)
-  height: number; // Percentage of canvas height (0-100)
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 };
+
+export function webcamPositionToApiFormat(position: WebcamPosition): number {
+  const { x, y } = position;
+
+  // Map webcam positions to API format:
+  // Top-left: 0
+  // Top-right: 25
+  // Bottom-left: 50
+  // Bottom-right: 100
+
+  if (x < 50 && y < 50) {
+    return 0; // Top-left
+  } else if (x >= 50 && y < 50) {
+    return 25; // Top-right
+  } else if (x < 50 && y >= 50) {
+    return 50; // Bottom-left (FIXED: was returning 25)
+  } else {
+    return 100; // Bottom-right
+  }
+}
 
 export type CanvasMergerOptions = {
   width: number;
@@ -147,7 +162,8 @@ export class CanvasMerger {
       this.screenVideo.srcObject
     ) {
       // Calculate aspect ratio and center
-      const screenAspect = this.screenVideo.videoWidth / this.screenVideo.videoHeight;
+      const screenAspect =
+        this.screenVideo.videoWidth / this.screenVideo.videoHeight;
       const canvasAspect = width / height;
 
       let drawWidth = width;
@@ -192,83 +208,42 @@ export class CanvasMerger {
       const webcamX = (width * pos.x) / 100;
       const webcamY = (height * pos.y) / 100;
 
-      // Calculate webcam aspect ratio
-      const webcamAspect =
-        this.webcamVideo.videoWidth / this.webcamVideo.videoHeight;
-      const targetAspect = webcamWidth / webcamHeight;
+      // For circular webcam, use the smaller dimension as diameter
+      const webcamSize = Math.min(webcamWidth, webcamHeight);
+      const radius = webcamSize / 2;
 
-      let drawWebcamWidth = webcamWidth;
-      let drawWebcamHeight = webcamHeight;
-      let drawWebcamX = webcamX;
-      let drawWebcamY = webcamY;
+      // Center the circle within the position bounds
+      const centerX = webcamX + webcamWidth / 2;
+      const centerY = webcamY + webcamHeight / 2;
 
-      if (webcamAspect > targetAspect) {
-        // Webcam is wider - fit to height
-        drawWebcamHeight = webcamHeight;
-        drawWebcamWidth = webcamHeight * webcamAspect;
-        drawWebcamX = webcamX - (drawWebcamWidth - webcamWidth) / 2;
-      } else {
-        // Webcam is taller - fit to width
-        drawWebcamWidth = webcamWidth;
-        drawWebcamHeight = webcamWidth / webcamAspect;
-        drawWebcamY = webcamY - (drawWebcamHeight - webcamHeight) / 2;
-      }
+      // Calculate square bounds for drawing the video (to fill the circle)
+      const drawWebcamSize = webcamSize;
+      const drawWebcamX = centerX - radius;
+      const drawWebcamY = centerY - radius;
 
       // Draw border/background circle for webcam
-      const borderRadius = this.options.webcamBorderRadius || 8;
       const borderWidth = this.options.webcamBorderWidth || 3;
       const borderColor = this.options.webcamBorderColor || "#ffffff";
 
-      // Helper function to draw rounded rectangle
-      const drawRoundedRect = (
-        x: number,
-        y: number,
-        width: number,
-        height: number,
-        radius: number
-      ) => {
-        this.ctx.beginPath();
-        this.ctx.moveTo(x + radius, y);
-        this.ctx.lineTo(x + width - radius, y);
-        this.ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
-        this.ctx.lineTo(x + width, y + height - radius);
-        this.ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
-        this.ctx.lineTo(x + radius, y + height);
-        this.ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
-        this.ctx.lineTo(x, y + radius);
-        this.ctx.quadraticCurveTo(x, y, x + radius, y);
-        this.ctx.closePath();
-      };
-
-      // Draw border
+      // Draw border circle
       this.ctx.save();
-      drawRoundedRect(
-        drawWebcamX - borderWidth,
-        drawWebcamY - borderWidth,
-        drawWebcamWidth + borderWidth * 2,
-        drawWebcamHeight + borderWidth * 2,
-        borderRadius
-      );
+      this.ctx.beginPath();
+      this.ctx.arc(centerX, centerY, radius + borderWidth, 0, 2 * Math.PI);
       this.ctx.fillStyle = borderColor;
       this.ctx.fill();
 
-      // Clip to rounded rectangle
-      drawRoundedRect(
-        drawWebcamX,
-        drawWebcamY,
-        drawWebcamWidth,
-        drawWebcamHeight,
-        borderRadius
-      );
+      // Clip to circle
+      this.ctx.beginPath();
+      this.ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
       this.ctx.clip();
 
-      // Draw webcam video
+      // Draw webcam video (square to fill the circle)
       this.ctx.drawImage(
         this.webcamVideo,
         drawWebcamX,
         drawWebcamY,
-        drawWebcamWidth,
-        drawWebcamHeight
+        drawWebcamSize,
+        drawWebcamSize
       );
 
       this.ctx.restore();
@@ -358,4 +333,3 @@ export class CanvasMerger {
     }
   }
 }
-

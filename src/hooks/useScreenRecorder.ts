@@ -9,7 +9,11 @@ export type UseScreenRecorderReturn = {
   state: RecordingState;
   duration: number;
   blob: Blob | null;
+  screenBlob: Blob | null;
+  webcamBlob: Blob | null;
   size: number;
+  screenSize: number;
+  webcamSize: number;
   error: string | null;
   canvas: HTMLCanvasElement | null;
   isWebcamEnabled: boolean;
@@ -36,7 +40,11 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
   const [state, setState] = useState<RecordingState>("idle");
   const [duration, setDuration] = useState<number>(0);
   const [blob, setBlob] = useState<Blob | null>(null);
+  const [screenBlob, setScreenBlob] = useState<Blob | null>(null);
+  const [webcamBlob, setWebcamBlob] = useState<Blob | null>(null);
   const [size, setSize] = useState<number>(0);
+  const [screenSize, setScreenSize] = useState<number>(0);
+  const [webcamSize, setWebcamSize] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
   const [canvas, setCanvas] = useState<HTMLCanvasElement | null>(null);
   const [isWebcamEnabled, setIsWebcamEnabled] = useState<boolean>(false);
@@ -60,8 +68,14 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
       onScreenShareStopped: () => {
         // Screen share was stopped by user
         const finalBlob = recorderRef.current?.getBlob() || null;
+        const finalScreenBlob = recorderRef.current?.getScreenBlob() || null;
+        const finalWebcamBlob = recorderRef.current?.getWebcamBlob() || null;
         setBlob(finalBlob);
+        setScreenBlob(finalScreenBlob);
+        setWebcamBlob(finalWebcamBlob);
         setSize(recorderRef.current?.getSize() || 0);
+        setScreenSize(recorderRef.current?.getScreenSize() || 0);
+        setWebcamSize(recorderRef.current?.getWebcamSize() || 0);
       },
       onWebcamDisconnected: () => {
         setIsWebcamEnabled(false);
@@ -105,8 +119,14 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
   const stop = useCallback(() => {
     setError(null);
     const resultBlob = recorderRef.current?.stop() || null;
+    const resultScreenBlob = recorderRef.current?.getScreenBlob() || null;
+    const resultWebcamBlob = recorderRef.current?.getWebcamBlob() || null;
     setBlob(resultBlob);
+    setScreenBlob(resultScreenBlob);
+    setWebcamBlob(resultWebcamBlob);
     setSize(recorderRef.current?.getSize() || 0);
+    setScreenSize(recorderRef.current?.getScreenSize() || 0);
+    setWebcamSize(recorderRef.current?.getWebcamSize() || 0);
     return resultBlob;
   }, []);
 
@@ -123,7 +143,11 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
     setState("idle");
     setDuration(0);
     setBlob(null);
+    setScreenBlob(null);
+    setWebcamBlob(null);
     setSize(0);
+    setScreenSize(0);
+    setWebcamSize(0);
     setError(null);
     setCanvas(null);
     setIsWebcamEnabled(false);
@@ -141,8 +165,14 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
       },
       onScreenShareStopped: () => {
         const finalBlob = recorderRef.current?.getBlob() || null;
+        const finalScreenBlob = recorderRef.current?.getScreenBlob() || null;
+        const finalWebcamBlob = recorderRef.current?.getWebcamBlob() || null;
         setBlob(finalBlob);
+        setScreenBlob(finalScreenBlob);
+        setWebcamBlob(finalWebcamBlob);
         setSize(recorderRef.current?.getSize() || 0);
+        setScreenSize(recorderRef.current?.getScreenSize() || 0);
+        setWebcamSize(recorderRef.current?.getWebcamSize() || 0);
       },
       onWebcamDisconnected: () => {
         setIsWebcamEnabled(false);
@@ -187,7 +217,11 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
     state,
     duration,
     blob,
+    screenBlob,
+    webcamBlob,
     size,
+    screenSize,
+    webcamSize,
     error,
     canvas,
     isWebcamEnabled,
