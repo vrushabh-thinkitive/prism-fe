@@ -48,7 +48,6 @@ export class DualRecorder {
   private callbacks: DualRecordingEventCallbacks = {};
   private preferredMimeType: string | null = null;
   private countdownAborted: boolean = false;
-  private countdownResolve: ((value: void) => void) | null = null;
   private countdownReject: ((reason?: any) => void) | null = null;
 
   constructor(callbacks?: DualRecordingEventCallbacks) {
@@ -173,7 +172,10 @@ export class DualRecorder {
           echoCancellation: false,
           noiseSuppression: false,
           autoGainControl: false,
-          sampleRate: { ideal: TARGET_AUDIO_SAMPLE_RATE, max: TARGET_AUDIO_SAMPLE_RATE },
+          sampleRate: {
+            ideal: TARGET_AUDIO_SAMPLE_RATE,
+            max: TARGET_AUDIO_SAMPLE_RATE,
+          },
         } as MediaTrackConstraints, // Request system audio
       };
 
@@ -193,7 +195,6 @@ export class DualRecorder {
       try {
         await new Promise<void>((resolve, reject) => {
           this.countdownReject = reject;
-          this.countdownResolve = resolve;
           countdownTimeout = setTimeout(() => {
             if (!this.countdownAborted) {
               resolve();
@@ -208,11 +209,9 @@ export class DualRecorder {
         }
         screenStream.getTracks().forEach((track) => track.stop());
         this.setState("idle");
-        this.countdownResolve = null;
         this.countdownReject = null;
         throw error;
       } finally {
-        this.countdownResolve = null;
         this.countdownReject = null;
         if (countdownTimeout) {
           clearTimeout(countdownTimeout);
@@ -247,7 +246,10 @@ export class DualRecorder {
           frameRate: { ideal: TARGET_FPS, max: TARGET_FPS },
         },
         audio: {
-          sampleRate: { ideal: TARGET_AUDIO_SAMPLE_RATE, max: TARGET_AUDIO_SAMPLE_RATE },
+          sampleRate: {
+            ideal: TARGET_AUDIO_SAMPLE_RATE,
+            max: TARGET_AUDIO_SAMPLE_RATE,
+          },
         },
       });
 
@@ -287,15 +289,21 @@ export class DualRecorder {
 
       // Ensure both audio tracks use the same sampleRate
       const screenAudioTrack = screenStream.getAudioTracks()[0];
-      const webcamAudioTrack = webcamStream.getAudioTracks()[0];
-      
+      // Reuse webcamAudioTrack that was already declared above
+
       if (screenAudioTrack && webcamAudioTrack) {
         try {
           await screenAudioTrack.applyConstraints({
-            sampleRate: { ideal: TARGET_AUDIO_SAMPLE_RATE, max: TARGET_AUDIO_SAMPLE_RATE },
+            sampleRate: {
+              ideal: TARGET_AUDIO_SAMPLE_RATE,
+              max: TARGET_AUDIO_SAMPLE_RATE,
+            },
           });
           await webcamAudioTrack.applyConstraints({
-            sampleRate: { ideal: TARGET_AUDIO_SAMPLE_RATE, max: TARGET_AUDIO_SAMPLE_RATE },
+            sampleRate: {
+              ideal: TARGET_AUDIO_SAMPLE_RATE,
+              max: TARGET_AUDIO_SAMPLE_RATE,
+            },
           });
         } catch (error) {
           console.warn("Could not apply audio sampleRate constraints:", error);
@@ -320,7 +328,7 @@ export class DualRecorder {
       this.screenRecorder.onstop = () => {
         // Screen recording stopped
       };
-      this.screenRecorder.onerror = (event: Event) => {
+      this.screenRecorder.onerror = () => {
         const error = new Error("Screen MediaRecorder error occurred");
         this.handleError(error);
       };
@@ -336,7 +344,7 @@ export class DualRecorder {
       this.webcamRecorder.onstop = () => {
         // Webcam recording stopped
       };
-      this.webcamRecorder.onerror = (event: Event) => {
+      this.webcamRecorder.onerror = () => {
         const error = new Error("Webcam MediaRecorder error occurred");
         this.handleError(error);
       };
@@ -372,17 +380,11 @@ export class DualRecorder {
 
     try {
       // Stop both MediaRecorders
-      if (
-        this.screenRecorder &&
-        this.screenRecorder.state !== "inactive"
-      ) {
+      if (this.screenRecorder && this.screenRecorder.state !== "inactive") {
         this.screenRecorder.stop();
       }
 
-      if (
-        this.webcamRecorder &&
-        this.webcamRecorder.state !== "inactive"
-      ) {
+      if (this.webcamRecorder && this.webcamRecorder.state !== "inactive") {
         this.webcamRecorder.stop();
       }
 
@@ -425,17 +427,11 @@ export class DualRecorder {
     }
 
     try {
-      if (
-        this.screenRecorder &&
-        this.screenRecorder.state === "recording"
-      ) {
+      if (this.screenRecorder && this.screenRecorder.state === "recording") {
         this.screenRecorder.pause();
       }
 
-      if (
-        this.webcamRecorder &&
-        this.webcamRecorder.state === "recording"
-      ) {
+      if (this.webcamRecorder && this.webcamRecorder.state === "recording") {
         this.webcamRecorder.pause();
       }
 
@@ -457,19 +453,13 @@ export class DualRecorder {
     }
 
     try {
-      if (
-        this.screenRecorder &&
-        this.screenRecorder.state === "paused"
-      ) {
+      if (this.screenRecorder && this.screenRecorder.state === "paused") {
         const pausedDuration = Date.now() - this.pausedTime;
         this.totalPausedDuration += pausedDuration;
         this.screenRecorder.resume();
       }
 
-      if (
-        this.webcamRecorder &&
-        this.webcamRecorder.state === "paused"
-      ) {
+      if (this.webcamRecorder && this.webcamRecorder.state === "paused") {
         this.webcamRecorder.resume();
       }
 
@@ -518,16 +508,7 @@ export class DualRecorder {
     if (this.countdownReject) {
       this.countdownReject(new Error("Countdown cancelled by user"));
       this.countdownReject = null;
-      this.countdownResolve = null;
     }
-  }
-
-  /**
-   * Handle stop event
-   */
-  private handleStop(): void {
-    this.setState("stopped");
-    this.stopDurationTracking();
   }
 
   /**
@@ -612,4 +593,3 @@ export class DualRecorder {
     this.state = "idle";
   }
 }
-
