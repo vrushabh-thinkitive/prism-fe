@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useScreenRecorder } from "../hooks/useScreenRecorder";
 import { useSimpleUpload } from "../hooks/useSimpleUpload";
 import { useResumableUpload } from "../hooks/useResumableUpload";
+import { useDualUpload } from "../hooks/useDualUpload";
 import type { WebcamPosition } from "../utils/canvas-merger";
 import CountdownTimer from "./CountdownTimer";
 
@@ -14,7 +15,11 @@ export default function ScreenRecorder() {
     state,
     duration,
     blob,
+    screenBlob,
+    webcamBlob,
     size,
+    screenSize,
+    webcamSize,
     error,
     canvas,
     isWebcamEnabled,
@@ -34,6 +39,7 @@ export default function ScreenRecorder() {
   // Use both hooks (React hooks must be called unconditionally)
   const simpleUpload = useSimpleUpload();
   const resumableUpload = useResumableUpload();
+  const dualUpload = useDualUpload();
 
   // Determine which upload hook to use based on blob size
   // TEMPORARY: Using V2 (resumable) for all files for testing
@@ -64,10 +70,10 @@ export default function ScreenRecorder() {
     width: 18,
     height: 24,
   });
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [selectedCorner, setSelectedCorner] = useState<string>("top-right");
   const [showCountdown, setShowCountdown] = useState<boolean>(false);
   const [countdownDuration] = useState<number>(3);
+  const [uploadType, setUploadType] = useState<"resumable" | "dual">("dual");
   const [recordingOptions, setRecordingOptions] = useState<{
     enableWebcam: boolean;
     enableMicrophone: boolean;
@@ -97,38 +103,27 @@ export default function ScreenRecorder() {
   const canStart = state === "idle" || state === "stopped" || state === "error";
   const canStop = state === "recording" || state === "paused";
 
-  // Update canvas preview when canvas is available
-  useEffect(() => {
-    if (canvas && canvasRef.current) {
-      const previewCanvas = canvasRef.current;
-      const ctx = previewCanvas.getContext("2d");
-      if (ctx) {
-        const drawCanvas = () => {
-          if (canvas && previewCanvas && (isRecording || isPaused)) {
-            // Set preview canvas size to match aspect ratio
-            const aspectRatio = canvas.width / canvas.height;
-            const maxWidth = 1920;
-            const maxHeight = 1080;
-            let previewWidth = maxWidth;
-            let previewHeight = maxWidth / aspectRatio;
+  // Check if upload button should be enabled
+  // Enable when:
+  // - Recording is stopped (completed)
+  // - For dual upload: Both screen and webcam blobs are available
+  // - For resumable upload: Single blob is available
+  // - No active upload
+  const canUpload =
+    state === "stopped" &&
+    ((uploadType === "dual" && screenBlob !== null && webcamBlob !== null) ||
+      (uploadType === "resumable" && blob !== null)) &&
+    uploadState !== "uploading" &&
+    uploadState !== "initializing" &&
+    uploadState !== "completing" &&
+    uploadState !== "completed" &&
+    dualUpload.state !== "uploading" &&
+    dualUpload.state !== "initializing" &&
+    dualUpload.state !== "completing" &&
+    dualUpload.state !== "completed";
 
-            if (previewHeight > maxHeight) {
-              previewHeight = maxHeight;
-              previewWidth = maxHeight * aspectRatio;
-            }
-
-            previewCanvas.width = previewWidth;
-            previewCanvas.height = previewHeight;
-
-            ctx.drawImage(canvas, 0, 0, previewWidth, previewHeight);
-            requestAnimationFrame(drawCanvas);
-          }
-        };
-        const animationId = requestAnimationFrame(drawCanvas);
-        return () => cancelAnimationFrame(animationId);
-      }
-    }
-  }, [canvas, isRecording, isPaused]);
+  // Note: Live preview during recording has been removed
+  // Preview is only shown after recording stops
 
   // Update webcam position when corner changes
   const handleCornerChange = (corner: string) => {
@@ -263,6 +258,8 @@ export default function ScreenRecorder() {
     const recordedBlob = stop();
     if (recordedBlob) {
       console.log("recordedBlob", recordedBlob);
+      console.log("screenBlob", screenBlob);
+      console.log("webcamBlob", webcamBlob);
 
       // Clear old upload state if this is a fresh recording (no upload was started)
       // This prevents "Upload Interrupted" tab from showing for a fresh recording
@@ -305,39 +302,104 @@ export default function ScreenRecorder() {
   };
 
   const handleUpload = async () => {
-    if (!blob) {
-      console.error("No recording blob available");
+    // Only allow upload if recording is stopped (completed)
+    if (state !== "stopped") {
+      console.warn("⚠️ Please complete recording first before uploading");
+      return;
+    }
+
+    // Prevent starting if upload is already in progress
+    if (
+      (uploadType === "dual" &&
+        (dualUpload.state === "uploading" ||
+          dualUpload.state === "initializing" ||
+          dualUpload.state === "completing")) ||
+      (uploadType === "resumable" &&
+        (resumableUpload.state === "uploading" ||
+          resumableUpload.state === "initializing" ||
+          resumableUpload.state === "completing"))
+    ) {
+      console.warn("⚠️ Upload is already in progress");
       return;
     }
 
     try {
-      // Generate filename with timestamp
-      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-      const fileName = `recording-${timestamp}.webm`;
-
-      // Choose upload method based on file size
-      const isLargeFile = blob.size >= LARGE_FILE_THRESHOLD;
-      console.log(
-        `📤 Starting ${isLargeFile ? "V2 (Resumable)" : "V1 (Simple)"} upload:`,
-        {
-          fileName,
-          size: `${(blob.size / 1024 / 1024).toFixed(2)} MB`,
-          method: isLargeFile ? "Resumable (Backend-Driven)" : "Simple PUT",
+      if (uploadType === "dual") {
+        // Dual upload: Upload screen and webcam separately
+        if (!screenBlob || !webcamBlob) {
+          console.error(
+            "❌ Missing screen or webcam recording. Both are required for dual upload."
+          );
+          return;
         }
-      );
 
-      const result = await upload(blob, {
-        fileName,
-        duration: Math.floor(duration),
-        // userId: "user123", // TODO: Get from auth context
-      });
+        console.log("📤 Starting dual upload with existing recordings...");
+        console.log(
+          "📋 Screen size:",
+          `${(screenSize / 1024 / 1024).toFixed(2)} MB`
+        );
+        console.log(
+          "📋 Webcam size:",
+          `${(webcamSize / 1024 / 1024).toFixed(2)} MB`
+        );
 
-      console.log("Upload successful:", {
-        recordingId: result.recordingId,
-        playbackUrl: result.playbackUrl,
-      });
+        const result = await dualUpload.upload(screenBlob, webcamBlob, {
+          duration: Math.floor(duration),
+          webcamPosition: webcamPosition,
+          // userId: "user123", // TODO: Get from auth context
+        });
+
+        console.log("✅ Dual upload successful:", {
+          recordingId: result.recordingId,
+          playbackUrl: result.playbackUrl,
+        });
+      } else {
+        // Resumable upload: Upload single merged blob
+        if (!blob) {
+          console.error("❌ No recording blob available");
+          return;
+        }
+
+        console.log("📤 Starting resumable upload...");
+        console.log(
+          "📋 File size:",
+          `${(blob.size / 1024 / 1024).toFixed(2)} MB`
+        );
+
+        // Generate filename with timestamp
+        const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+        const fileName = `recording-${timestamp}.webm`;
+
+        // Choose upload method based on file size
+        const isLargeFile = blob.size >= LARGE_FILE_THRESHOLD;
+        console.log(
+          `📤 Starting ${
+            isLargeFile ? "V2 (Resumable)" : "V1 (Simple)"
+          } upload:`,
+          {
+            fileName,
+            size: `${(blob.size / 1024 / 1024).toFixed(2)} MB`,
+            method: isLargeFile ? "Resumable (Backend-Driven)" : "Simple PUT",
+          }
+        );
+
+        const result = await upload(blob, {
+          fileName,
+          duration: Math.floor(duration),
+          // userId: "user123", // TODO: Get from auth context
+        });
+
+        console.log("✅ Resumable upload successful:", {
+          recordingId: result.recordingId,
+          playbackUrl: result.playbackUrl,
+        });
+      }
     } catch (error) {
-      console.error("Upload failed:", error);
+      console.error(
+        `❌ ${uploadType === "dual" ? "Dual" : "Resumable"} upload failed:`,
+        error
+      );
+      throw error;
     }
   };
 
@@ -568,6 +630,59 @@ export default function ScreenRecorder() {
         </div>
       )}
 
+      {/* Upload Type Selection */}
+      {canStart && (
+        <div className="bg-white dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800 p-6 shadow-sm">
+          <h3 className="text-xl font-semibold text-black dark:text-white mb-4">
+            ☁️ Upload Type
+          </h3>
+          <div className="space-y-3">
+            <label className="flex items-center gap-3 cursor-pointer p-3 rounded-lg hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors">
+              <input
+                type="radio"
+                name="uploadType"
+                value="dual"
+                checked={uploadType === "dual"}
+                onChange={(e) =>
+                  setUploadType(e.target.value as "dual" | "resumable")
+                }
+                className="w-5 h-5 text-blue-600 border-zinc-300 dark:border-zinc-700 focus:ring-blue-500"
+              />
+              <div className="flex-1">
+                <span className="text-black dark:text-white font-medium">
+                  Dual Upload (Screen + Webcam Separate)
+                </span>
+                <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-1">
+                  Uploads screen and webcam recordings separately. Backend
+                  merges them with webcam position.
+                </p>
+              </div>
+            </label>
+            <label className="flex items-center gap-3 cursor-pointer p-3 rounded-lg hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors">
+              <input
+                type="radio"
+                name="uploadType"
+                value="resumable"
+                checked={uploadType === "resumable"}
+                onChange={(e) =>
+                  setUploadType(e.target.value as "dual" | "resumable")
+                }
+                className="w-5 h-5 text-blue-600 border-zinc-300 dark:border-zinc-700 focus:ring-blue-500"
+              />
+              <div className="flex-1">
+                <span className="text-black dark:text-white font-medium">
+                  Resumable Upload (Single Merged File)
+                </span>
+                <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-1">
+                  Uploads the merged recording as a single file. Supports resume
+                  on interruption.
+                </p>
+              </div>
+            </label>
+          </div>
+        </div>
+      )}
+
       {/* Microphone Controls (During Recording) */}
       {isMicrophoneEnabled && (isRecording || isPaused) && (
         <div className="bg-white dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800 p-6 shadow-sm">
@@ -617,27 +732,6 @@ export default function ScreenRecorder() {
                 ? "🔊 Unmute Microphone"
                 : "🔇 Mute Microphone"}
             </button>
-          </div>
-        </div>
-      )}
-
-      {/* Canvas Preview (Live Recording Preview) */}
-      {canvas && (isRecording || isPaused) && (
-        <div className="bg-white dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800 p-6 shadow-sm">
-          <h3 className="text-xl font-semibold text-black dark:text-white mb-4">
-            📺 Live Preview
-          </h3>
-          <div className="relative bg-black rounded-lg overflow-hidden">
-            <canvas
-              ref={canvasRef}
-              className="w-full h-auto max-h-[600px] object-contain"
-              style={{ display: "block" }}
-            />
-            {isWebcamEnabled && (
-              <div className="absolute top-2 right-2 bg-green-500 text-white px-2 py-1 rounded text-xs font-medium">
-                📹 Webcam Active
-              </div>
-            )}
           </div>
         </div>
       )}
@@ -711,15 +805,17 @@ export default function ScreenRecorder() {
       </div>
 
       {/* Error Display */}
-      {error && (
+      {(error || dualUpload.error) && (
         <div className="bg-red-50 dark:bg-red-900/20 rounded-lg border border-red-200 dark:border-red-800 p-4">
           <div className="flex items-start gap-3">
             <span className="text-xl">⚠️</span>
             <div>
               <h3 className="font-semibold text-red-900 dark:text-red-200 mb-1">
-                Recording Error
+                {dualUpload.error ? "Upload Error" : "Recording Error"}
               </h3>
-              <p className="text-sm text-red-800 dark:text-red-300">{error}</p>
+              <p className="text-sm text-red-800 dark:text-red-300">
+                {dualUpload.error || error}
+              </p>
             </div>
           </div>
         </div>
@@ -824,31 +920,46 @@ export default function ScreenRecorder() {
               <div className="flex gap-2">
                 <button
                   onClick={handleUpload}
-                  disabled={
-                    uploadState === "uploading" ||
-                    uploadState === "initializing" ||
-                    uploadState === "completing" ||
-                    uploadState === "completed"
-                  }
+                  disabled={!canUpload}
                   className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-                    uploadState === "uploading" ||
-                    uploadState === "initializing" ||
-                    uploadState === "completing"
+                    !canUpload
+                      ? "bg-gray-400 text-white cursor-not-allowed dark:bg-gray-600"
+                      : (uploadType === "dual" &&
+                          (dualUpload.state === "initializing" ||
+                            dualUpload.state === "uploading" ||
+                            dualUpload.state === "completing")) ||
+                        (uploadType === "resumable" &&
+                          (resumableUpload.state === "initializing" ||
+                            resumableUpload.state === "uploading" ||
+                            resumableUpload.state === "completing"))
                       ? "bg-blue-400 text-white cursor-not-allowed dark:bg-blue-600"
-                      : uploadState === "completed"
+                      : (uploadType === "dual" &&
+                          dualUpload.state === "completed") ||
+                        (uploadType === "resumable" &&
+                          resumableUpload.state === "completed")
                       ? "bg-green-600 text-white cursor-not-allowed dark:bg-green-500"
                       : "bg-blue-600 text-white hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
                   }`}
                 >
-                  {uploadState === "initializing"
+                  {uploadType === "dual"
+                    ? dualUpload.state === "initializing"
+                      ? "🔄 Initializing..."
+                      : dualUpload.state === "uploading"
+                      ? "⏳ Uploading..."
+                      : dualUpload.state === "completing"
+                      ? "🎯 Completing..."
+                      : dualUpload.state === "completed"
+                      ? "✅ Upload Complete"
+                      : "☁️ Upload Recording (Dual)"
+                    : resumableUpload.state === "initializing"
                     ? "🔄 Initializing..."
-                    : uploadState === "uploading"
+                    : resumableUpload.state === "uploading"
                     ? "⏳ Uploading..."
-                    : uploadState === "completing"
+                    : resumableUpload.state === "completing"
                     ? "🎯 Completing..."
-                    : uploadState === "completed"
+                    : resumableUpload.state === "completed"
                     ? "✅ Upload Complete"
-                    : "☁️ Upload Recording"}
+                    : "☁️ Upload Recording (Resumable)"}
                 </button>
                 <a
                   href={previewUrl}
@@ -884,8 +995,84 @@ export default function ScreenRecorder() {
               </div>
             )}
 
+            {/* Dual Upload Progress */}
+            {dualUpload.progress && (
+              <div className="space-y-4">
+                <div className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                  Dual Upload Progress
+                </div>
+                {/* Screen Upload Progress */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-zinc-600 dark:text-zinc-400">
+                      Screen Upload
+                    </span>
+                    <span className="font-medium text-black dark:text-white">
+                      {dualUpload.progress.screen.percentage.toFixed(1)}%
+                    </span>
+                  </div>
+                  <div className="w-full bg-zinc-200 dark:bg-zinc-800 rounded-full h-2.5">
+                    <div
+                      className="bg-blue-600 h-2.5 rounded-full transition-all duration-300"
+                      style={{
+                        width: `${dualUpload.progress.screen.percentage}%`,
+                      }}
+                    />
+                  </div>
+                  <div className="text-xs text-zinc-500 dark:text-zinc-400">
+                    {(
+                      dualUpload.progress.screen.uploadedBytes /
+                      1024 /
+                      1024
+                    ).toFixed(2)}{" "}
+                    MB /{" "}
+                    {(
+                      dualUpload.progress.screen.totalBytes /
+                      1024 /
+                      1024
+                    ).toFixed(2)}{" "}
+                    MB
+                  </div>
+                </div>
+                {/* Webcam Upload Progress */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-zinc-600 dark:text-zinc-400">
+                      Webcam Upload
+                    </span>
+                    <span className="font-medium text-black dark:text-white">
+                      {dualUpload.progress.webcam.percentage.toFixed(1)}%
+                    </span>
+                  </div>
+                  <div className="w-full bg-zinc-200 dark:bg-zinc-800 rounded-full h-2.5">
+                    <div
+                      className="bg-green-600 h-2.5 rounded-full transition-all duration-300"
+                      style={{
+                        width: `${dualUpload.progress.webcam.percentage}%`,
+                      }}
+                    />
+                  </div>
+                  <div className="text-xs text-zinc-500 dark:text-zinc-400">
+                    {(
+                      dualUpload.progress.webcam.uploadedBytes /
+                      1024 /
+                      1024
+                    ).toFixed(2)}{" "}
+                    MB /{" "}
+                    {(
+                      dualUpload.progress.webcam.totalBytes /
+                      1024 /
+                      1024
+                    ).toFixed(2)}{" "}
+                    MB
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Upload Error */}
-            {uploadError && (
+            {((uploadType === "dual" && dualUpload.error) ||
+              (uploadType === "resumable" && resumableUpload.error)) && (
               <div className="bg-red-50 dark:bg-red-900/20 rounded-lg border border-red-200 dark:border-red-800 p-3">
                 <div className="flex items-start gap-2">
                   <span className="text-lg">⚠️</span>
@@ -894,7 +1081,9 @@ export default function ScreenRecorder() {
                       Upload Error
                     </p>
                     <p className="text-xs text-red-800 dark:text-red-300">
-                      {uploadError}
+                      {uploadType === "dual"
+                        ? dualUpload.error
+                        : resumableUpload.error}
                     </p>
                   </div>
                 </div>
@@ -902,35 +1091,42 @@ export default function ScreenRecorder() {
             )}
 
             {/* Upload Success */}
-            {uploadState === "completed" && (
+            {(uploadState === "completed" ||
+              dualUpload.state === "completed") && (
               <div className="bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800 p-4 space-y-3">
                 <div className="flex items-center gap-2">
                   <span className="text-lg">✅</span>
                   <p className="text-sm font-medium text-green-900 dark:text-green-200">
-                    Recording uploaded successfully!
+                    {dualUpload.state === "completed"
+                      ? "Dual recording uploaded successfully!"
+                      : "Recording uploaded successfully!"}
                   </p>
                 </div>
-                {recordingId && (
+                {(recordingId || dualUpload.recordingId) && (
                   <div className="text-xs text-green-800 dark:text-green-300">
                     Recording ID:{" "}
                     <code className="bg-green-100 dark:bg-green-900/50 px-1 py-0.5 rounded">
-                      {recordingId}
+                      {dualUpload.recordingId || recordingId}
                     </code>
                   </div>
                 )}
-                {playbackUrl && (
+                {(playbackUrl || dualUpload.playbackUrl) && (
                   <div className="space-y-2">
                     <p className="text-sm font-medium text-green-900 dark:text-green-200">
                       🎬 Playback URL:
                     </p>
                     <video
-                      src={playbackUrl}
+                      src={
+                        (uploadType === "dual"
+                          ? dualUpload.playbackUrl
+                          : playbackUrl) || undefined
+                      }
                       controls
                       className="w-full rounded-lg bg-black"
                       style={{ maxHeight: "600px" }}
                     />
                     <a
-                      href={playbackUrl}
+                      href={dualUpload.playbackUrl || playbackUrl || ""}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="inline-block px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 dark:bg-green-500 dark:hover:bg-green-600 transition-colors text-sm"

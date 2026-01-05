@@ -41,7 +41,11 @@ export class ScreenRecorder {
   private webcamStream: MediaStream | null = null;
   private microphoneStream: MediaStream | null = null;
   private recorder: MediaRecorder | null = null;
+  private screenRecorder: MediaRecorder | null = null; // Separate recorder for screen
+  private webcamRecorder: MediaRecorder | null = null; // Separate recorder for webcam
   private chunks: Blob[] = [];
+  private screenChunks: Blob[] = []; // Separate chunks for screen
+  private webcamChunks: Blob[] = []; // Separate chunks for webcam
   private state: RecordingState = "idle";
   private startTime: number = 0;
   private pausedTime: number = 0;
@@ -111,6 +115,7 @@ export class ScreenRecorder {
 
   /**
    * Get the recorded blob (only available after stop)
+   * Returns merged blob for backward compatibility
    */
   getBlob(): Blob | null {
     if (this.chunks.length === 0) {
@@ -122,10 +127,48 @@ export class ScreenRecorder {
   }
 
   /**
+   * Get the screen recording blob (only available after stop)
+   */
+  getScreenBlob(): Blob | null {
+    if (this.screenChunks.length === 0) {
+      return null;
+    }
+    return new Blob(this.screenChunks, {
+      type: this.preferredMimeType || "video/webm",
+    });
+  }
+
+  /**
+   * Get the webcam recording blob (only available after stop)
+   */
+  getWebcamBlob(): Blob | null {
+    if (this.webcamChunks.length === 0) {
+      return null;
+    }
+    return new Blob(this.webcamChunks, {
+      type: this.preferredMimeType || "video/webm",
+    });
+  }
+
+  /**
    * Get the size of recorded data in bytes
    */
   getSize(): number {
     return this.chunks.reduce((total, chunk) => total + chunk.size, 0);
+  }
+
+  /**
+   * Get the size of screen recording in bytes
+   */
+  getScreenSize(): number {
+    return this.screenChunks.reduce((total, chunk) => total + chunk.size, 0);
+  }
+
+  /**
+   * Get the size of webcam recording in bytes
+   */
+  getWebcamSize(): number {
+    return this.webcamChunks.reduce((total, chunk) => total + chunk.size, 0);
   }
 
   /**
@@ -155,7 +198,11 @@ export class ScreenRecorder {
           height: { ideal: 720, max: 720 }, // Cap at 720p height
           frameRate: { ideal: 30, max: 30 }, // Cap at 30 FPS
         } as MediaTrackConstraints,
-        audio: false, // Screen audio can be added later if needed
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        } as MediaTrackConstraints, // Request system audio
       };
 
       const screenStream = await navigator.mediaDevices.getDisplayMedia(
@@ -360,10 +407,10 @@ export class ScreenRecorder {
           (this.enableMicrophone ? 128000 : undefined), // 128 kbps
       };
 
-      // Create MediaRecorder with merged stream (or screen stream if no webcam)
+      // Create MediaRecorder with merged stream (or screen stream if no webcam) for preview
       this.recorder = new MediaRecorder(recordingStream, recorderOptions);
 
-      // Setup event handlers
+      // Setup event handlers for merged recorder (for preview)
       this.recorder.ondataavailable = (event: BlobEvent) => {
         if (event.data && event.data.size > 0) {
           this.chunks.push(event.data);
@@ -380,14 +427,55 @@ export class ScreenRecorder {
         this.handleError(error);
       };
 
-      // Start recording
+      // Create separate screen recorder (screen + system audio if available)
+      const screenStreamWithAudio = new MediaStream();
+      screenStream.getVideoTracks().forEach(track => screenStreamWithAudio.addTrack(track));
+      // Try to get system audio from screen stream
+      screenStream.getAudioTracks().forEach(track => screenStreamWithAudio.addTrack(track));
+      
+      this.screenRecorder = new MediaRecorder(screenStreamWithAudio, recorderOptions);
+      this.screenRecorder.ondataavailable = (event: BlobEvent) => {
+        if (event.data && event.data.size > 0) {
+          this.screenChunks.push(event.data);
+        }
+      };
+      this.screenRecorder.onerror = (event: Event) => {
+        console.error("Screen recorder error:", event);
+      };
+
+      // Create separate webcam recorder (webcam + mic audio)
+      if (this.webcamStream) {
+        const webcamStreamWithAudio = new MediaStream();
+        this.webcamStream.getVideoTracks().forEach(track => webcamStreamWithAudio.addTrack(track));
+        if (this.microphoneStream) {
+          this.microphoneStream.getAudioTracks().forEach(track => webcamStreamWithAudio.addTrack(track));
+        }
+        
+        this.webcamRecorder = new MediaRecorder(webcamStreamWithAudio, recorderOptions);
+        this.webcamRecorder.ondataavailable = (event: BlobEvent) => {
+          if (event.data && event.data.size > 0) {
+            this.webcamChunks.push(event.data);
+          }
+        };
+        this.webcamRecorder.onerror = (event: Event) => {
+          console.error("Webcam recorder error:", event);
+        };
+      }
+
+      // Start all recorders
       const timeslice = options?.timeslice || 1000; // Collect data every 1 second
       this.recorder.start(timeslice);
+      this.screenRecorder.start(timeslice);
+      if (this.webcamRecorder) {
+        this.webcamRecorder.start(timeslice);
+      }
 
       // Update state
       this.startTime = Date.now();
       this.totalPausedDuration = 0;
       this.chunks = []; // Reset chunks for new recording
+      this.screenChunks = []; // Reset screen chunks
+      this.webcamChunks = []; // Reset webcam chunks
       this.setState("recording");
 
       // Start duration tracking
@@ -408,9 +496,17 @@ export class ScreenRecorder {
     }
 
     try {
-      // Stop MediaRecorder
+      // Stop all MediaRecorders
       if (this.recorder && this.recorder.state !== "inactive") {
         this.recorder.stop();
+      }
+
+      if (this.screenRecorder && this.screenRecorder.state !== "inactive") {
+        this.screenRecorder.stop();
+      }
+
+      if (this.webcamRecorder && this.webcamRecorder.state !== "inactive") {
+        this.webcamRecorder.stop();
       }
 
       // Stop canvas drawing
@@ -743,10 +839,14 @@ export class ScreenRecorder {
     this.stopMicrophoneLevelMonitoring();
 
     this.chunks = [];
+    this.screenChunks = [];
+    this.webcamChunks = [];
     this.stream = null;
     this.webcamStream = null;
     this.microphoneStream = null;
     this.recorder = null;
+    this.screenRecorder = null;
+    this.webcamRecorder = null;
     this.state = "idle";
     this.enableWebcam = false;
     this.enableMicrophone = false;
