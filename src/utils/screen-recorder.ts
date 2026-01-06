@@ -194,9 +194,6 @@ export class ScreenRecorder {
       const screenOptions: MediaStreamConstraints = {
         video: {
           displaySurface: "browser" as DisplayCaptureSurfaceType,
-          width: { ideal: 1280, max: 1280 }, // Cap at 720p width
-          height: { ideal: 720, max: 720 }, // Cap at 720p height
-          frameRate: { ideal: 30, max: 30 }, // Cap at 30 FPS
         } as MediaTrackConstraints,
         audio: {
           echoCancellation: false,
@@ -270,15 +267,9 @@ export class ScreenRecorder {
         };
       }
 
-      // Get screen dimensions for canvas (capped at 720p)
-      const screenWidth = Math.min(
-        videoTrack?.getSettings().width || 1920,
-        1280
-      );
-      const screenHeight = Math.min(
-        videoTrack?.getSettings().height || 1080,
-        720
-      );
+      // Get screen dimensions for canvas
+      const screenWidth = videoTrack?.getSettings().width || 1920;
+      const screenHeight = videoTrack?.getSettings().height || 1080;
 
       // Check if webcam is enabled
       this.enableWebcam = options?.enableWebcam || false;
@@ -329,11 +320,7 @@ export class ScreenRecorder {
           }
 
           this.webcamStream = await navigator.mediaDevices.getUserMedia({
-            video: {
-              width: { ideal: 640, max: 640 }, // VGA for overlay
-              height: { ideal: 480, max: 480 }, // VGA for overlay
-              frameRate: { ideal: 30, max: 30 }, // Cap at 30 FPS
-            },
+            video: true,
             audio: false,
           });
 
@@ -401,10 +388,8 @@ export class ScreenRecorder {
       // Setup MediaRecorder options
       const recorderOptions: MediaRecorderOptions = {
         mimeType: options?.mimeType || this.preferredMimeType || undefined,
-        videoBitsPerSecond: options?.videoBitsPerSecond || 1200000, // 1.2 Mbps for 720p@30fps
-        audioBitsPerSecond:
-          options?.audioBitsPerSecond ||
-          (this.enableMicrophone ? 128000 : undefined), // 128 kbps
+        videoBitsPerSecond: options?.videoBitsPerSecond,
+        audioBitsPerSecond: options?.audioBitsPerSecond,
       };
 
       // Create MediaRecorder with merged stream (or screen stream if no webcam) for preview

@@ -158,15 +158,11 @@ export class DualRecorder {
       }
 
       // Standard settings for consistent recording
-      const TARGET_FPS = 30;
       const TARGET_AUDIO_SAMPLE_RATE = 48000; // Standard audio sample rate
 
       const screenOptions: MediaStreamConstraints = {
         video: {
           displaySurface: "browser" as DisplayCaptureSurfaceType,
-          width: { ideal: 1280, max: 1280 },
-          height: { ideal: 720, max: 720 },
-          frameRate: { ideal: TARGET_FPS, max: TARGET_FPS },
         } as MediaTrackConstraints,
         audio: {
           echoCancellation: false,
@@ -240,11 +236,7 @@ export class DualRecorder {
       }
 
       const webcamStream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          width: { ideal: 640, max: 640 },
-          height: { ideal: 480, max: 480 },
-          frameRate: { ideal: TARGET_FPS, max: TARGET_FPS },
-        },
+        video: true,
         audio: {
           sampleRate: {
             ideal: TARGET_AUDIO_SAMPLE_RATE,
@@ -271,22 +263,7 @@ export class DualRecorder {
 
       this.webcamStream = webcamStream;
 
-      // Step 3: Normalize track settings to ensure identical codec, fps, and audio rate
-      // Apply constraints to ensure both video tracks have the same frameRate
-      if (screenVideoTrack && webcamVideoTrack) {
-        try {
-          // Ensure both video tracks use the same frameRate
-          await screenVideoTrack.applyConstraints({
-            frameRate: { ideal: TARGET_FPS, max: TARGET_FPS },
-          });
-          await webcamVideoTrack.applyConstraints({
-            frameRate: { ideal: TARGET_FPS, max: TARGET_FPS },
-          });
-        } catch (error) {
-          console.warn("Could not apply frameRate constraints:", error);
-        }
-      }
-
+      // Step 3: Normalize track settings to ensure identical audio rate
       // Ensure both audio tracks use the same sampleRate
       const screenAudioTrack = screenStream.getAudioTracks()[0];
       // Reuse webcamAudioTrack that was already declared above
@@ -313,8 +290,8 @@ export class DualRecorder {
       // Step 4: Create two separate MediaRecorder instances with identical settings
       const recorderOptions: MediaRecorderOptions = {
         mimeType: options?.mimeType || this.preferredMimeType || undefined,
-        videoBitsPerSecond: options?.videoBitsPerSecond || 1200000,
-        audioBitsPerSecond: options?.audioBitsPerSecond || 128000,
+        videoBitsPerSecond: options?.videoBitsPerSecond,
+        audioBitsPerSecond: options?.audioBitsPerSecond,
       };
 
       // Screen recorder (screen + system audio if available)
