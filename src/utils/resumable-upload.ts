@@ -39,7 +39,7 @@ export type ChunkUploadResult = {
  * @param chunkIndex - Zero-based index of the chunk
  * @param chunkSize - Size of each chunk (from backend)
  * @param totalSize - Total file size
- * @param apiBaseUrl - Backend API base URL
+ * @param accessToken - Access token for authentication
  * @param maxRetries - Maximum number of retry attempts (default: 3)
  */
 export async function uploadChunk(
@@ -48,6 +48,7 @@ export async function uploadChunk(
   chunkIndex: number,
   chunkSize: number,
   totalSize: number,
+  accessToken: string,
   maxRetries: number = 3
 ): Promise<ChunkUploadResult> {
   const start = chunkIndex * chunkSize;
@@ -68,12 +69,15 @@ export async function uploadChunk(
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
+      const headers: HeadersInit = {
+        "Content-Type": "application/octet-stream",
+        "Content-Range": contentRange,
+        "Authorization": `Bearer ${accessToken}`,
+      };
+
       const response = await fetch(API_ENDPOINTS.UPLOAD_CHUNK(recordingId), {
         method: "PUT",
-        headers: {
-          "Content-Type": "application/octet-stream",
-          "Content-Range": contentRange,
-        },
+        headers,
         body: chunk,
       });
 

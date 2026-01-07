@@ -10,6 +10,7 @@ import {
   completeDualUpload,
 } from "../utils/api-config";
 import { webcamPositionToApiFormat, type WebcamPosition } from "../utils/canvas-merger";
+import { useAuthUser } from "./useAuthUser";
 
 export type DualUploadState =
   | "idle"
@@ -54,6 +55,7 @@ export function useDualUpload(): UseDualUploadReturn {
   const [progress, setProgress] = useState<DualUploadProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [playbackUrl, setPlaybackUrl] = useState<string | null>(null);
+  const { getAccessToken, isAuthenticated } = useAuthUser();
 
   const uploadStreamChunks = useCallback(
     async (
@@ -65,8 +67,10 @@ export function useDualUpload(): UseDualUploadReturn {
         chunk: Blob,
         chunkIndex: number,
         chunkSize: number,
-        totalSize: number
+        totalSize: number,
+        accessToken: string
       ) => Promise<{ uploadedBytes: number; done: boolean }>,
+      accessToken: string,
       onProgress?: (progress: UploadProgress) => void
     ): Promise<void> => {
       const chunks = sliceBlobIntoChunks(blob, chunkSize);
@@ -79,7 +83,8 @@ export function useDualUpload(): UseDualUploadReturn {
           chunk,
           i,
           chunkSize,
-          totalSize
+          totalSize,
+          accessToken
         );
 
         const progressData: UploadProgress = {
@@ -121,6 +126,10 @@ export function useDualUpload(): UseDualUploadReturn {
         throw new Error("webcamPosition is required");
       }
 
+      if (!isAuthenticated) {
+        throw new Error("User must be authenticated to upload");
+      }
+
       const opts = options;
       setError(null);
       setProgress(null);
@@ -128,6 +137,8 @@ export function useDualUpload(): UseDualUploadReturn {
       setPlaybackUrl(null);
 
       try {
+        const accessToken = await getAccessToken();
+
         setState("initializing");
         console.log("🚀 Step 1: Initializing dual upload session...");
         console.log(
@@ -148,6 +159,7 @@ export function useDualUpload(): UseDualUploadReturn {
           webcamPosition: apiWebcamPosition,
           duration: opts.duration,
           userId: opts.userId,
+          accessToken,
         });
 
         console.log("✅ Dual upload session initialized:", {
@@ -180,6 +192,7 @@ export function useDualUpload(): UseDualUploadReturn {
             initResult.recordingId,
             initResult.chunkSize,
             uploadScreenChunk,
+            accessToken,
             (screenProgress) => {
               setProgress((prev) => {
                 if (!prev) return null;
@@ -197,6 +210,7 @@ export function useDualUpload(): UseDualUploadReturn {
             initResult.recordingId,
             initResult.chunkSize,
             uploadWebcamChunk,
+            accessToken,
             (webcamProgress) => {
               setProgress((prev) => {
                 if (!prev) return null;
@@ -218,6 +232,7 @@ export function useDualUpload(): UseDualUploadReturn {
 
         const completeResult = await completeDualUpload({
           recordingId: initResult.recordingId,
+          accessToken,
         });
 
         console.log("✅ Dual upload completed:", {
@@ -250,7 +265,7 @@ export function useDualUpload(): UseDualUploadReturn {
         throw error;
       }
     },
-    [uploadStreamChunks]
+    [uploadStreamChunks, isAuthenticated, getAccessToken]
   );
 
   const reset = useCallback(() => {

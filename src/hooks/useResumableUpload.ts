@@ -11,6 +11,7 @@ import {
   getUploadStatus,
   completeVideoUpload,
 } from "../utils/api-config";
+import { useAuthUser } from "./useAuthUser";
 
 const SESSION_STORAGE_KEY = "activeRecordingId";
 
@@ -118,6 +119,7 @@ export function useResumableUpload(): UseResumableUploadReturn {
   const [progress, setProgress] = useState<UploadProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [playbackUrl, setPlaybackUrl] = useState<string | null>(null);
+  const { getAccessToken, isAuthenticated } = useAuthUser();
 
   // Save recordingId to sessionStorage helper
   const saveRecordingId = useCallback((id: string) => {
@@ -140,6 +142,7 @@ export function useResumableUpload(): UseResumableUploadReturn {
       recordingId: string,
       chunkSize: number,
       startFromChunk: number,
+      accessToken: string,
       options: ResumableUploadOptions = {}
     ): Promise<void> => {
       // Slice blob into chunks
@@ -156,7 +159,8 @@ export function useResumableUpload(): UseResumableUploadReturn {
           chunk,
           i,
           chunkSize,
-          totalSize
+          totalSize,
+          accessToken
         );
 
         // Update progress
@@ -205,6 +209,10 @@ export function useResumableUpload(): UseResumableUploadReturn {
       recordingId: string;
       playbackUrl?: string;
     }> => {
+      if (!isAuthenticated) {
+        throw new Error("User must be authenticated to upload");
+      }
+
       const opts = options || {};
       setError(null);
       setProgress(null);
@@ -214,6 +222,7 @@ export function useResumableUpload(): UseResumableUploadReturn {
       try {
         const fileName = opts.fileName || "recording.webm";
         const mimeType = blob.type || "video/webm";
+        const accessToken = await getAccessToken();
 
         // Step 1: Initialize resumable upload session
         setState("initializing");
@@ -228,6 +237,7 @@ export function useResumableUpload(): UseResumableUploadReturn {
           mimeType,
           duration: opts.duration,
           userId: opts.userId || "user123",
+          accessToken,
         });
 
         console.log("✅ Resumable upload session initialized:", {
@@ -248,6 +258,7 @@ export function useResumableUpload(): UseResumableUploadReturn {
           initResult.recordingId,
           initResult.chunkSize,
           0, // Start from beginning
+          accessToken,
           {
             onProgress: (progressData) => {
               setProgress(progressData);
@@ -270,6 +281,7 @@ export function useResumableUpload(): UseResumableUploadReturn {
         const completeResult = await completeVideoUpload({
           recordingId: initResult.recordingId,
           size: blob.size,
+          accessToken,
         });
 
         console.log("✅ Upload completed:", {
@@ -325,16 +337,25 @@ export function useResumableUpload(): UseResumableUploadReturn {
       recordingId: string;
       playbackUrl?: string;
     }> => {
+      if (!isAuthenticated) {
+        throw new Error("User must be authenticated to resume upload");
+      }
+
       const opts = options || {};
       setError(null);
       setRecordingId(recordingId);
 
       try {
+        const accessToken = await getAccessToken();
+
         // Step 1: Get upload status
         setState("initializing");
         console.log("🔄 Resuming upload:", recordingId);
 
-        const status = await getUploadStatus(recordingId);
+        const status = await getUploadStatus({
+          recordingId,
+          accessToken,
+        });
 
         console.log("📊 Upload status:", {
           uploadedBytes: `${(status.uploadedBytes / 1024 / 1024).toFixed(
@@ -358,6 +379,7 @@ export function useResumableUpload(): UseResumableUploadReturn {
           const completeResult = await completeVideoUpload({
             recordingId,
             size: status.fileSize,
+            accessToken,
           });
 
           if (completeResult.playbackUrl) {
@@ -392,6 +414,7 @@ export function useResumableUpload(): UseResumableUploadReturn {
           recordingId,
           status.chunkSize,
           startFromChunk,
+          accessToken,
           {
             onProgress: (progressData) => {
               setProgress(progressData);
@@ -414,6 +437,7 @@ export function useResumableUpload(): UseResumableUploadReturn {
         const completeResult = await completeVideoUpload({
           recordingId,
           size: blob.size,
+          accessToken,
         });
 
         console.log("✅ Upload completed:", {
@@ -447,7 +471,7 @@ export function useResumableUpload(): UseResumableUploadReturn {
         throw error;
       }
     },
-    [uploadChunks]
+    [uploadChunks, isAuthenticated, getAccessToken]
   );
 
   const reset = useCallback(() => {
