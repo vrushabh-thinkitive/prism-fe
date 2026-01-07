@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { uploadBlobToGCS, type SimpleUploadOptions } from "../utils/simple-upload";
 import { initVideoUpload, completeVideoUpload } from "../utils/api-config";
+import { useAuthUser } from "./useAuthUser";
 
 export type UploadState =
   | "idle"
@@ -80,6 +81,7 @@ export function useSimpleUpload(): UseSimpleUploadReturn {
   const [error, setError] = useState<string | null>(null);
   const [recordingId, setRecordingId] = useState<string | null>(null);
   const [playbackUrl, setPlaybackUrl] = useState<string | null>(null);
+  const { getAccessToken, isAuthenticated } = useAuthUser();
 
   const upload = useCallback(
     async (
@@ -95,6 +97,10 @@ export function useSimpleUpload(): UseSimpleUploadReturn {
       recordingId: string;
       playbackUrl?: string;
     }> => {
+      if (!isAuthenticated) {
+        throw new Error("User must be authenticated to upload");
+      }
+
       setError(null);
       setProgress(null);
       setRecordingId(null);
@@ -103,6 +109,7 @@ export function useSimpleUpload(): UseSimpleUploadReturn {
       try {
         const fileName = options.fileName || "recording.webm";
         const mimeType = blob.type || "video/webm";
+        const accessToken = await getAccessToken();
 
         // Step 1: Initialize upload session (get signed PUT URL from backend)
         setState("initializing");
@@ -117,6 +124,7 @@ export function useSimpleUpload(): UseSimpleUploadReturn {
           mimeType,
           duration: options.duration,
           userId: options?.userId || "user123",
+          accessToken,
         });
 
         console.log("✅ Upload session initialized:", {
@@ -153,6 +161,7 @@ export function useSimpleUpload(): UseSimpleUploadReturn {
         const completeResult = await completeVideoUpload({
           recordingId: initResult.recordingId,
           size: blob.size,
+          accessToken,
         });
 
         console.log("✅ Upload completed:", {
@@ -182,7 +191,7 @@ export function useSimpleUpload(): UseSimpleUploadReturn {
         throw error;
       }
     },
-    []
+    [isAuthenticated, getAccessToken]
   );
 
   const reset = useCallback(() => {

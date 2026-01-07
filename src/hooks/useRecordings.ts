@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { getRecordings } from "../utils/api-config";
+import { useAuthUser } from "./useAuthUser";
 import type { Recording } from "../types/recording";
 
 export type UseRecordingsReturn = {
@@ -18,13 +19,24 @@ export function useRecordings(): UseRecordingsReturn {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const isMountedRef = useRef<boolean>(true);
+  const { getAccessToken, isAuthenticated } = useAuthUser();
 
-  const fetchRecordings = async () => {
+  const fetchRecordings = useCallback(async () => {
+    if (!isAuthenticated) {
+      console.warn("⚠️ User not authenticated, skipping recordings fetch");
+      if (isMountedRef.current) {
+        setError("User not authenticated");
+        setLoading(false);
+      }
+      return;
+    }
+
     try {
       setError(null);
       setLoading(true);
       console.log("🔄 Fetching recordings...");
-      const data = await getRecordings();
+      const accessToken = await getAccessToken();
+      const data = await getRecordings({ accessToken });
       console.log("📊 Recordings received:", data);
       console.log("📊 Recordings count:", Array.isArray(data) ? data.length : 0);
       
@@ -40,18 +52,22 @@ export function useRecordings(): UseRecordingsReturn {
         setLoading(false);
       }
     }
-  };
+  }, [isAuthenticated, getAccessToken]);
 
-  // Initial fetch only - runs once when component mounts
+  // Initial fetch only - runs once when component mounts or when authenticated
   useEffect(() => {
     isMountedRef.current = true;
-    fetchRecordings();
+    if (isAuthenticated) {
+      fetchRecordings();
+    } else {
+      setLoading(false);
+    }
 
     // Cleanup on unmount
     return () => {
       isMountedRef.current = false;
     };
-  }, []); // Empty deps - only run on mount/unmount
+  }, [isAuthenticated, fetchRecordings]); // Re-fetch when authentication status changes
 
   return {
     recordings,
