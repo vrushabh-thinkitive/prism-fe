@@ -122,7 +122,7 @@ export default function RecordingDashboard() {
         )}
 
         {/* Debug Info (remove in production) */}
-        {process.env.NODE_ENV === 'development' && recordings.length > 0 && (
+        {import.meta.env.DEV && recordings.length > 0 && (
           <div className="bg-gray-50 dark:bg-zinc-800 rounded-lg border border-gray-200 dark:border-zinc-700 p-4">
             <details className="text-xs">
               <summary className="cursor-pointer text-gray-600 dark:text-gray-400 font-medium mb-2">

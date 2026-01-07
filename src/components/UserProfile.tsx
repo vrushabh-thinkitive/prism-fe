@@ -100,7 +100,7 @@ const UserProfile = () => {
             </div>
 
             {/* Display full user object for debugging (optional) */}
-            {/* {process.env.NODE_ENV === 'development' && (
+            {/* {import.meta.env.DEV && (
               <details className="mt-6">
                 <summary className="cursor-pointer text-sm font-medium text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300">
                   View Full User Object (Dev Only)
